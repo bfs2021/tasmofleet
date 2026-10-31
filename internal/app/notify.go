@@ -54,5 +54,21 @@ func (a *runtime) notifyBatchDone(j model.Job) {
 	if _, dup := a.notifiedBatches.LoadOrStore(j.BatchID, struct{}{}); dup {
 		return
 	}
+	// The number only has to outlive the moment two jobs of one transaction end together.
+	time.AfterFunc(10*time.Minute, func() { a.notifiedBatches.Delete(j.BatchID) })
 	a.notifier.Emit(notify.UpdateFinished(a.notifier.Config(), int64(j.BatchID), ok, failed, cancelled, target, time.Now()))
+}
+
+// drainNotifications gives the messages still on their way a few seconds at shutdown.
+func (a *runtime) drainNotifications() {
+	if a.notifier == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() { a.notifier.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		a.log.Warn("notifications still in flight at shutdown were dropped")
+	}
 }

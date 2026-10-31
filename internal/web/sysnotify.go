@@ -97,7 +97,7 @@ func (h *handler) sysNotifyTest(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	all, _, _, ok := h.sysForm(w, r, true, sysFormExtras...)
+	all, clear, _, ok := h.sysForm(w, r, true, sysFormExtras...)
 	if !ok {
 		return
 	}
@@ -105,6 +105,11 @@ func (h *handler) sysNotifyTest(w http.ResponseWriter, r *http.Request) {
 	for k, v := range all {
 		if strings.HasPrefix(k, prefix) {
 			values[k] = v
+		}
+	}
+	for _, k := range clear { // "Reset to default" ticked: the test sees what the save would store, a removed secret included
+		if strings.HasPrefix(k, prefix) {
+			values[k] = config.DefaultValue(k)
 		}
 	}
 	values[prefix] = "true" // the person pressed the button of this channel: check it as if it were on

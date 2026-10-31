@@ -272,6 +272,7 @@ func (a *runtime) run(ctx context.Context) error {
 	}
 	cancelBG()
 	a.bgWG.Wait()
+	a.drainNotifications()
 	return errors.Join(runErr, err)
 }
 

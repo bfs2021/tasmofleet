@@ -57,12 +57,15 @@ func newWebhookClient() *http.Client {
 			if !strings.EqualFold(req.URL.Host, via[0].URL.Host) {
 				return errRedirectElsewhere
 			}
+			if via[0].URL.Scheme == "https" && req.URL.Scheme != "https" {
+				return errRedirectElsewhere // a secret header must not fall back to clear text
+			}
 			return nil
 		},
 	}
 }
 
-var errRedirectElsewhere = errors.New("redirected to another host (refused)")
+var errRedirectElsewhere = errors.New("redirected to another host or to plain http (refused)")
 
 // sendWebhook POSTs ev once. It returns a short detail that is safe to show: "HTTP 200" on
 // success, the reason on failure. retry says a second attempt may help (a network error or a

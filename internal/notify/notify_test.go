@@ -254,3 +254,24 @@ func TestBackupMessageListsDevicesAndCapsTheList(t *testing.T) {
 		t.Errorf("link without PUBLIC_URL = %q, want empty", got)
 	}
 }
+
+// Why (review): a secret header sent to an https address must not follow a redirect to http on the
+// same host, where it would travel in clear text.
+func TestWebhookRefusesARedirectFromHTTPSToPlainHTTP(t *testing.T) {
+	cl := newWebhookClient()
+	mk := func(u string) *http.Request { r, _ := http.NewRequest("POST", u, nil); return r }
+	for _, tc := range []struct {
+		from, to string
+		ok       bool
+	}{
+		{"https://hass.lan/h", "http://hass.lan/h", false},
+		{"https://hass.lan/h", "https://hass.lan/other", true},
+		{"http://hass.lan/h", "https://hass.lan/h", true},
+		{"http://hass.lan/h", "http://elsewhere.lan/h", false},
+	} {
+		err := cl.CheckRedirect(mk(tc.to), []*http.Request{mk(tc.from)})
+		if (err == nil) != tc.ok {
+			t.Errorf("%s -> %s: err=%v, want ok=%v", tc.from, tc.to, err, tc.ok)
+		}
+	}
+}

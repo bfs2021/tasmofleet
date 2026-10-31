@@ -25,7 +25,7 @@ func (n jobNotifier) JobChanged(j model.Job, ev model.JobEvent) {
 	if j.State.Terminal() {
 		n.rt.svc.Std.OTAJobsTotal.With(string(j.State)).Inc()
 		if n.rt.notifier != nil {
-			go n.rt.notifyBatchDone(j) // a database read: not on the engine's thread
+			n.rt.bgWG.Go(func() { n.rt.notifyBatchDone(j) }) // a database read: not on the engine's thread; shutdown waits for it
 		}
 	}
 }

@@ -197,15 +197,16 @@ func orNone(s string) string {
 var secretTargets = map[string]func(config.Config) string{
 	"MQTT_PASSWORD":      func(c config.Config) string { return hostPort(c.MQTTURL) },
 	"OIDC_CLIENT_SECRET": func(c config.Config) string { return hostPort(c.OIDCIssuer) },
-	// The notification secrets go only where they were entered (#249): to the webhook's host and
-	// port, to the mail server's host, port, security and user. Without this, an admin could point
+	// The notification secrets go only where they were entered (#249): to the webhook address as
+	// stored (any change of scheme, host, port, path or query drops the secret), to the mail
+	// server's host, port, security mode (a downgrade to none included) and user. Without this, an admin could point
 	// the address at a host of their own and read the stored secret there.
-	"NOTIFY_WEBHOOK_SECRET": func(c config.Config) string { return hostPort(c.NotifyWebhookURL) },
+	"NOTIFY_WEBHOOK_SECRET": func(c config.Config) string { return strings.TrimSpace(c.NotifyWebhookURL) }, // the whole address: scheme, host, port, path, query
 	"NOTIFY_SMTP_PASSWORD": func(c config.Config) string {
 		if c.NotifySMTPHost == "" {
 			return ""
 		}
-		return strings.ToLower(fmt.Sprintf("%s:%d|%s|%s", c.NotifySMTPHost, c.NotifySMTPPort, c.NotifySMTPSecurity, c.NotifySMTPUser))
+		return fmt.Sprintf("%s:%d|%s|%s", strings.TrimSpace(c.NotifySMTPHost), c.NotifySMTPPort, c.NotifySMTPSecurity, strings.TrimSpace(c.NotifySMTPUser))
 	},
 }
 
@@ -321,6 +322,9 @@ func (s *Service) State() []FieldState {
 	for _, f := range fields {
 		val, _ := config.Format(s.cur, f.Key)
 		st := FieldState{Field: f, Value: redactURL(val), HasValue: val != "", Source: SourceDefault}
+		if f.Key == "NOTIFY_WEBHOOK_URL" {
+			st.Value = val // the admin edits the address as stored: a token in the query must survive a save (it holds no user info: validation refuses that)
+		}
 		if f.Secret {
 			st.Value = ""
 		}
@@ -562,6 +566,9 @@ func (s *Service) apply(ctx context.Context, req Request) (Result, *Event, error
 			writes = append(writes, w)
 		}
 		shownOld, shownNew := redactURL(oldV), redactURL(newV)
+		if k == "NOTIFY_WEBHOOK_URL" {
+			shownOld, shownNew = redactWebhookURL(oldV), redactWebhookURL(newV) // the path can be a secret (a Home Assistant webhook id)
+		}
 		if f.Secret {
 			shownOld, shownNew = maskSecret(oldV), maskSecret(newV)
 		} else if f.Key == "MQTT_USER" {
@@ -993,4 +1000,18 @@ func (s *Service) Preview(values map[string]string) (config.Config, []string, er
 		dropped = append(dropped, key)
 	}
 	return cand, dropped, nil
+}
+
+// redactWebhookURL keeps scheme, host and port of a webhook address for the audit log and hides
+// the path and query, which can be the secret itself (a Home Assistant webhook id, an ntfy topic).
+func redactWebhookURL(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	out := u.Scheme + "://" + u.Host
+	if u.Path != "" && u.Path != "/" || u.RawQuery != "" {
+		out += "/***"
+	}
+	return out
 }

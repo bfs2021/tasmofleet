@@ -1533,7 +1533,7 @@ the failed devices), `snapshot.failed` (scheduled database snapshot), and `test`
 
 Delivery runs in the background and never fails the caller. The last delivery and the last test per
 channel are kept in memory (empty after a restart). The two secrets are write-only and stored with
-the other secrets (secretbox) and bound to the target they were entered for (webhook scheme, host and port;
+the other secrets (secretbox) and bound to the target they were entered for (the webhook address in full;
 mail host, port, security and user), like the MQTT password: a save that changes the target must enter the
 secret again, and a test with another target in the form sends the stored secret nowhere. "Send test" posts the form of the tab, saves nothing and uses the
 stored secret when the field is empty. Not in this version: device-offline events, HMAC signatures,

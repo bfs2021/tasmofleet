@@ -63,16 +63,16 @@ func TestNotificationTestUsesTheFormAndTheStoredSecretAndSavesNothing(t *testing
 		t.Fatal(err)
 	}
 	keep := svc.Snapshot().BackupKeep
-	form := url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:8123/api/webhook/x"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"},
+	form := url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:8123/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"},
 		"v.NOTIFY_WEBHOOK_HEADER": {"Authorization"}, "v.BACKUP_KEEP": {"2"}, "v.NOTIFY_SMTP_HOST": {"not a host !"}}
 	r, body := e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", form)
 	if r.StatusCode != 200 || !strings.Contains(body, "Webhook test: sent, HTTP 200") || strings.Contains(body, "secret not sent") {
 		t.Fatalf("status %d: %s", r.StatusCode, body)
 	}
-	if len(f.tested) != 1 || f.chans[0] != notify.Webhook || f.tested[0].NotifyWebhookURL != "http://hass.lan:8123/api/webhook/x" || f.tested[0].NotifyWebhookSecret != "stored-secret" {
+	if len(f.tested) != 1 || f.chans[0] != notify.Webhook || f.tested[0].NotifyWebhookURL != "http://hass.lan:8123/api/webhook/old" || f.tested[0].NotifyWebhookSecret != "stored-secret" {
 		t.Fatalf("tested %+v", f.tested)
 	}
-	if svc.Snapshot().NotifyWebhookURL != "http://hass.lan:8123/api/webhook/old" || svc.Snapshot().BackupKeep != keep {
+	if svc.Snapshot().NotifySMTPHost != "" || svc.Snapshot().BackupKeep != keep {
 		t.Fatal("a test saved a setting")
 	}
 	form.Set("v.NOTIFY_WEBHOOK_SECRET", "typed-secret")
@@ -101,6 +101,8 @@ func TestNotificationTestNeverSendsAStoredSecretToAnotherTarget(t *testing.T) {
 	}{
 		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"http://evil.example:8123/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
 		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:9999/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
+		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:8123/api/webhook/other"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
+		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"https://hass.lan:8123/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
 		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"evil.example"}, "v.NOTIFY_SMTP_USER": {"mailer"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
 		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"mail.lan"}, "v.NOTIFY_SMTP_USER": {"other"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
 		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"mail.lan"}, "v.NOTIFY_SMTP_USER": {"mailer"}, "v.NOTIFY_SMTP_SECURITY": {"none"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
@@ -126,6 +128,20 @@ func TestNotificationTestNeverSendsAStoredSecretToAnotherTarget(t *testing.T) {
 	e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://new.lan/h"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}, "v.NOTIFY_WEBHOOK_SECRET": {"typed"}})
 	if len(f.tested) != 1 || f.tested[0].NotifyWebhookSecret != "typed" {
 		t.Fatalf("typed secret: %+v", f.tested)
+	}
+}
+
+// Why (review): a ticked "Reset to default" on the secret means the save would remove it, so the
+// test must not send it either.
+func TestNotificationTestHonoursAResetOfTheSecret(t *testing.T) {
+	f := &fakeNotify{result: notify.Attempt{OK: true, Detail: "HTTP 200"}}
+	e, svc := notifyEnv(t, f)
+	if _, err := svc.Apply(t.Context(), sysconfig.Request{Actor: "admin", Values: map[string]string{"NOTIFY_WEBHOOK_URL": "http://hass.lan/h", "NOTIFY_WEBHOOK_AUTH": "header", "NOTIFY_WEBHOOK_SECRET": "stored-secret"}}); err != nil {
+		t.Fatal(err)
+	}
+	e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://hass.lan/h"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}, "clear.NOTIFY_WEBHOOK_SECRET": {"1"}})
+	if len(f.tested) != 1 || f.tested[0].NotifyWebhookSecret != "" {
+		t.Fatalf("a secret that is reset on save was sent: %+v", f.tested)
 	}
 }
 
