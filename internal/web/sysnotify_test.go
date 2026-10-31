@@ -58,26 +58,74 @@ func TestNotificationSecretsAreNeverShownBack(t *testing.T) {
 func TestNotificationTestUsesTheFormAndTheStoredSecretAndSavesNothing(t *testing.T) {
 	f := &fakeNotify{result: notify.Attempt{OK: true, Detail: "HTTP 200"}}
 	e, svc := notifyEnv(t, f)
-	if _, err := svc.Apply(t.Context(), sysconfig.Request{Actor: "admin", Values: map[string]string{"NOTIFY_WEBHOOK_AUTH": "header", "NOTIFY_WEBHOOK_SECRET": "stored-secret"}}); err != nil {
+	if _, err := svc.Apply(t.Context(), sysconfig.Request{Actor: "admin", Values: map[string]string{"NOTIFY_WEBHOOK_URL": "http://hass.lan:8123/api/webhook/old",
+		"NOTIFY_WEBHOOK_AUTH": "header", "NOTIFY_WEBHOOK_SECRET": "stored-secret"}}); err != nil {
 		t.Fatal(err)
 	}
 	keep := svc.Snapshot().BackupKeep
 	form := url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:8123/api/webhook/x"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"},
 		"v.NOTIFY_WEBHOOK_HEADER": {"Authorization"}, "v.BACKUP_KEEP": {"2"}, "v.NOTIFY_SMTP_HOST": {"not a host !"}}
 	r, body := e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", form)
-	if r.StatusCode != 200 || !strings.Contains(body, "Webhook test: sent, HTTP 200") {
+	if r.StatusCode != 200 || !strings.Contains(body, "Webhook test: sent, HTTP 200") || strings.Contains(body, "secret not sent") {
 		t.Fatalf("status %d: %s", r.StatusCode, body)
 	}
 	if len(f.tested) != 1 || f.chans[0] != notify.Webhook || f.tested[0].NotifyWebhookURL != "http://hass.lan:8123/api/webhook/x" || f.tested[0].NotifyWebhookSecret != "stored-secret" {
 		t.Fatalf("tested %+v", f.tested)
 	}
-	if svc.Snapshot().NotifyWebhookURL != "" || svc.Snapshot().BackupKeep != keep {
+	if svc.Snapshot().NotifyWebhookURL != "http://hass.lan:8123/api/webhook/old" || svc.Snapshot().BackupKeep != keep {
 		t.Fatal("a test saved a setting")
 	}
 	form.Set("v.NOTIFY_WEBHOOK_SECRET", "typed-secret")
 	e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", form)
 	if len(f.tested) != 2 || f.tested[1].NotifyWebhookSecret != "typed-secret" {
 		t.Fatalf("a typed secret must win over the stored one: %+v", f.tested)
+	}
+}
+
+// Why (security review): the stored header value and SMTP password are write-only. If a test
+// could send them to whatever address is typed into the form, any admin could point it at their
+// own host and read them there. A changed target must therefore get no stored secret, and the
+// result line must say so.
+func TestNotificationTestNeverSendsAStoredSecretToAnotherTarget(t *testing.T) {
+	f := &fakeNotify{result: notify.Attempt{OK: true, Detail: "HTTP 200"}}
+	e, svc := notifyEnv(t, f)
+	if _, err := svc.Apply(t.Context(), sysconfig.Request{Actor: "admin", Values: map[string]string{
+		"NOTIFY_WEBHOOK_URL": "http://hass.lan:8123/api/webhook/old", "NOTIFY_WEBHOOK_AUTH": "header", "NOTIFY_WEBHOOK_SECRET": "stored-secret",
+		"NOTIFY_SMTP_HOST": "mail.lan", "NOTIFY_SMTP_USER": "mailer", "NOTIFY_SMTP_PASSWORD": "stored-mail-pass",
+		"NOTIFY_SMTP_FROM": "a@b.c", "NOTIFY_SMTP_TO": "d@e.f"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		channel string
+		form    url.Values
+	}{
+		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"http://evil.example:8123/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
+		{"webhook", url.Values{"v.NOTIFY_WEBHOOK_URL": {"http://hass.lan:9999/api/webhook/old"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}}},
+		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"evil.example"}, "v.NOTIFY_SMTP_USER": {"mailer"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
+		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"mail.lan"}, "v.NOTIFY_SMTP_USER": {"other"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
+		{"email", url.Values{"v.NOTIFY_SMTP_HOST": {"mail.lan"}, "v.NOTIFY_SMTP_USER": {"mailer"}, "v.NOTIFY_SMTP_SECURITY": {"none"}, "v.NOTIFY_SMTP_FROM": {"a@b.c"}, "v.NOTIFY_SMTP_TO": {"d@e.f"}}},
+	} {
+		f.tested = nil
+		tc.form.Set("csrf", "tok")
+		_, body := e.do(t, "POST", "/settings/system/notify-test/"+tc.channel, "admin", tc.form)
+		sent := func(c config.Config) string { // the secret this channel's sender would use
+			if tc.channel == "email" {
+				return c.NotifySMTPPassword
+			}
+			return c.NotifyWebhookSecret
+		}
+		if len(f.tested) != 1 || sent(f.tested[0]) != "" {
+			t.Errorf("%s %v: the stored secret reached the test: %+v", tc.channel, tc.form, f.tested)
+		}
+		if !strings.Contains(body, "secret not sent: target changed, enter it to test") {
+			t.Errorf("%s %v: the result does not say the secret was left out: %s", tc.channel, tc.form, body)
+		}
+	}
+	// Typing the secret for the new target is the way to test it.
+	f.tested = nil
+	e.do(t, "POST", "/settings/system/notify-test/webhook", "admin", url.Values{"csrf": {"tok"}, "v.NOTIFY_WEBHOOK_URL": {"http://new.lan/h"}, "v.NOTIFY_WEBHOOK_AUTH": {"header"}, "v.NOTIFY_WEBHOOK_SECRET": {"typed"}})
+	if len(f.tested) != 1 || f.tested[0].NotifyWebhookSecret != "typed" {
+		t.Fatalf("typed secret: %+v", f.tested)
 	}
 }
 

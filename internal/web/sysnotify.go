@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -78,6 +79,9 @@ func (h *handler) sysNotifyOf(values map[string]string) sysNotify {
 // notifyKeyPrefix names the settings a channel's test uses; the rest of the posted form is ignored.
 var notifyKeyPrefix = map[notify.Channel]string{notify.Webhook: "NOTIFY_WEBHOOK", notify.Email: "NOTIFY_SMTP"}
 
+// notifySecretKey is the write-only secret each channel sends.
+var notifySecretKey = map[notify.Channel]string{notify.Webhook: "NOTIFY_WEBHOOK_SECRET", notify.Email: "NOTIFY_SMTP_PASSWORD"}
+
 const (
 	webhookTestHelp = "Sends a test message with the values above. Saves nothing."
 	emailTestHelp   = "Sends one test e-mail. Saves nothing."
@@ -105,7 +109,7 @@ func (h *handler) sysNotifyTest(w http.ResponseWriter, r *http.Request) {
 	}
 	values[prefix] = "true" // the person pressed the button of this channel: check it as if it were on
 	msg := ""
-	cfg, err := h.d.SysConfig.Preview(values)
+	cfg, dropped, err := h.d.SysConfig.Preview(values)
 	var ve *sysconfig.ValidationError
 	switch {
 	case errors.As(err, &ve):
@@ -130,6 +134,10 @@ func (h *handler) sysNotifyTest(w http.ResponseWriter, r *http.Request) {
 		default:
 			msg = "failed: " + a.Detail
 		}
+	}
+	// A stored secret goes only to the target it was entered for: say that it was left out.
+	if slices.Contains(dropped, notifySecretKey[ch]) {
+		msg += " · secret not sent: target changed, enter it to test"
 	}
 	what, help := "Webhook test", webhookTestHelp
 	if ch == notify.Email {

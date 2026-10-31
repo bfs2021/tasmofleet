@@ -197,6 +197,16 @@ func orNone(s string) string {
 var secretTargets = map[string]func(config.Config) string{
 	"MQTT_PASSWORD":      func(c config.Config) string { return hostPort(c.MQTTURL) },
 	"OIDC_CLIENT_SECRET": func(c config.Config) string { return hostPort(c.OIDCIssuer) },
+	// The notification secrets go only where they were entered (#249): to the webhook's host and
+	// port, to the mail server's host, port, security and user. Without this, an admin could point
+	// the address at a host of their own and read the stored secret there.
+	"NOTIFY_WEBHOOK_SECRET": func(c config.Config) string { return hostPort(c.NotifyWebhookURL) },
+	"NOTIFY_SMTP_PASSWORD": func(c config.Config) string {
+		if c.NotifySMTPHost == "" {
+			return ""
+		}
+		return strings.ToLower(fmt.Sprintf("%s:%d|%s|%s", c.NotifySMTPHost, c.NotifySMTPPort, c.NotifySMTPSecurity, c.NotifySMTPUser))
+	},
 }
 
 // setSecret stores v in the field of c that belongs to key.
@@ -206,6 +216,10 @@ func setSecret(c *config.Config, key, v string) {
 		c.MQTTPassword = v
 	case "OIDC_CLIENT_SECRET":
 		c.OIDCClientSecret = v
+	case "NOTIFY_WEBHOOK_SECRET":
+		c.NotifyWebhookSecret = v
+	case "NOTIFY_SMTP_PASSWORD":
+		c.NotifySMTPPassword = v
 	}
 }
 
@@ -610,6 +624,10 @@ func secretValue(c config.Config, key string) string {
 		return c.MQTTPassword
 	case "OIDC_CLIENT_SECRET":
 		return c.OIDCClientSecret
+	case "NOTIFY_WEBHOOK_SECRET":
+		return c.NotifyWebhookSecret
+	case "NOTIFY_SMTP_PASSWORD":
+		return c.NotifySMTPPassword
 	}
 	return ""
 }
@@ -830,7 +848,9 @@ func importLegacy(ctx context.Context, o *Options, rows map[string]store.SystemS
 		}
 		f, _ := Lookup(k)
 		ch := store.SystemSettingChange{Key: k, Value: v, Secret: f.Secret}
-		if f.Secret {
+		if t, bound := secretTargets[k]; f.Secret && bound {
+			ch.Target = t(next)
+		} else if f.Secret {
 			ch.Target = hostPort(next.MQTTURL)
 		} else if formatted, err := config.Format(next, k); err == nil {
 			ch.Value = formatted
@@ -944,22 +964,33 @@ func (s *Service) MarkSetupDone(ctx context.Context, actor string) error {
 	return nil
 }
 
-// Preview is the effective configuration with the given form values on top, validated like a
-// save but not stored: the base of the notification test buttons. A key that is missing (an
-// empty secret field is not posted) keeps its current value, so a stored secret is used by the
-// test without ever being shown.
-func (s *Service) Preview(values map[string]string) (config.Config, error) {
-	cand := s.Snapshot()
+// Preview is the effective configuration with the given form values on top, validated but not
+// stored: the base of the notification test buttons. A key that is missing (an empty secret field
+// is not posted) keeps its current value, so a stored secret is used by the test without ever
+// being shown, but only for the target it was entered for: when the form names another target
+// the stored secret is dropped from the preview and its key is returned, so the test cannot be
+// used to send a write-only secret to a host of the admin's choice.
+func (s *Service) Preview(values map[string]string) (config.Config, []string, error) {
+	cur := s.Snapshot()
+	cand := cur
 	for k, v := range values {
 		if _, ok := Lookup(k); !ok {
-			return config.Config{}, &ValidationError{Fields: map[string]string{k: "not an editable setting"}}
+			return config.Config{}, nil, &ValidationError{Fields: map[string]string{k: "not an editable setting"}}
 		}
 		if err := config.Set(&cand, k, v); err != nil {
-			return config.Config{}, &ValidationError{Fields: map[string]string{k: config.KeyErrors(err)[k]}}
+			return config.Config{}, nil, &ValidationError{Fields: map[string]string{k: config.KeyErrors(err)[k]}}
 		}
 	}
 	if err := config.Validate(cand); err != nil {
-		return config.Config{}, &ValidationError{Fields: config.KeyErrors(err)}
+		return config.Config{}, nil, &ValidationError{Fields: config.KeyErrors(err)}
 	}
-	return cand, nil
+	var dropped []string
+	for key, target := range secretTargets {
+		if _, typed := values[key]; typed || secretValue(cand, key) == "" || target(cand) == target(cur) {
+			continue
+		}
+		setSecret(&cand, key, "")
+		dropped = append(dropped, key)
+	}
+	return cand, dropped, nil
 }

@@ -28,7 +28,8 @@ type SysConfigService interface {
 	TestSSO(ctx context.Context, req sysconfig.TestRequest) (string, error)
 	Reset(ctx context.Context, req sysconfig.ResetRequest) (sysconfig.Result, error)
 	// Preview is the effective configuration with form values on top, validated, not stored.
-	Preview(values map[string]string) (config.Config, error)
+	// The second result lists stored secrets left out because the form names another target.
+	Preview(values map[string]string) (config.Config, []string, error)
 }
 
 const sysPath = "/settings/system"
