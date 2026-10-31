@@ -24,6 +24,9 @@ func (n jobNotifier) JobChanged(j model.Job, ev model.JobEvent) {
 	n.rt.learnFWReachNoFromJob(j, ev)
 	if j.State.Terminal() {
 		n.rt.svc.Std.OTAJobsTotal.With(string(j.State)).Inc()
+		if n.rt.notifier != nil {
+			go n.rt.notifyBatchDone(j) // a database read: not on the engine's thread
+		}
 	}
 }
 

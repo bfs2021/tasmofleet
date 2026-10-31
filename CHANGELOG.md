@@ -6,6 +6,10 @@ always upgrade automatically.
 
 ## Unreleased
 
+### Added
+
+- Notifications by webhook or e-mail (#249): Settings has a new "Notifications" tab. Pick the events (an update transaction finished, with "any result" or "failed or partial only"; a scheduled device backup run with failures; a failed database snapshot), then a webhook (generic JSON, or the same JSON for a Home Assistant webhook trigger; optional secret header) and/or SMTP e-mail (STARTTLS, TLS or none). "Send test" per channel tests the form without saving, a status line shows the last delivery or test. The header value and the SMTP password are write-only and stored encrypted like the other secrets. The last delivery and test are kept in memory only: they are empty after a restart. The new settings are `NOTIFY_*` keys (see `docs/configuration.md`); like all settings they belong on the page, not in the environment
+
 ## 0.24.0 "Hook Head" (2026-10-31)
 
 ### Upgrade notes

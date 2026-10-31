@@ -943,3 +943,23 @@ func (s *Service) MarkSetupDone(ctx context.Context, actor string) error {
 	s.stored[setupMarker] = store.SystemSetting{Key: setupMarker, Value: "1", UpdatedBy: actor}
 	return nil
 }
+
+// Preview is the effective configuration with the given form values on top, validated like a
+// save but not stored: the base of the notification test buttons. A key that is missing (an
+// empty secret field is not posted) keeps its current value, so a stored secret is used by the
+// test without ever being shown.
+func (s *Service) Preview(values map[string]string) (config.Config, error) {
+	cand := s.Snapshot()
+	for k, v := range values {
+		if _, ok := Lookup(k); !ok {
+			return config.Config{}, &ValidationError{Fields: map[string]string{k: "not an editable setting"}}
+		}
+		if err := config.Set(&cand, k, v); err != nil {
+			return config.Config{}, &ValidationError{Fields: map[string]string{k: config.KeyErrors(err)[k]}}
+		}
+	}
+	if err := config.Validate(cand); err != nil {
+		return config.Config{}, &ValidationError{Fields: config.KeyErrors(err)}
+	}
+	return cand, nil
+}

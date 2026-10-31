@@ -12,6 +12,7 @@ import (
 	"github.com/nofuturekid/tasmofleet/internal/health"
 	"github.com/nofuturekid/tasmofleet/internal/metrics"
 	"github.com/nofuturekid/tasmofleet/internal/model"
+	"github.com/nofuturekid/tasmofleet/internal/notify"
 )
 
 const (
@@ -192,6 +193,7 @@ func (a *runtime) backupAll(ctx context.Context) {
 	a.backupRun.Start(len(devs))
 	completed := false
 	defer func() { a.backupRun.Finish(completed) }()
+	var failed []string
 	for _, d := range devs {
 		if ctx.Err() != nil {
 			return
@@ -199,6 +201,7 @@ func (a *runtime) backupAll(ctx context.Context) {
 		_, err := a.backups.Backup(backup.WithRun(ctx, backup.Run{Trigger: model.TriggerScheduled}), "system", d.ID)
 		if err != nil {
 			a.log.Warn("scheduled backup failed", "device", d.Name, "err", err)
+			failed = append(failed, d.Name)
 		}
 		a.backupRun.Step(err != nil)
 		select {
@@ -208,4 +211,7 @@ func (a *runtime) backupAll(ctx context.Context) {
 		}
 	}
 	completed = true
+	if len(failed) > 0 && a.notifier != nil { // one message per run, listing the devices
+		a.notifier.Emit(notify.BackupFailed(a.notifier.Config(), len(devs), failed, time.Now()))
+	}
 }
