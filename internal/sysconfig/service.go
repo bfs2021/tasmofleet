@@ -177,6 +177,13 @@ func New(ctx context.Context, o Options) (*Service, error) {
 	svc.cur = cur
 	svc.cur = svc.bindSecrets(svc.cur)
 	for k, bound := range svc.mismatch {
+		if strings.HasPrefix(k, "NOTIFY_") {
+			// The target of a notification secret is a webhook address in full (its path or query can
+			// be the credential) or a mail login: never printed, only that it changed.
+			skipped[k] = errors.New("the stored secret was entered for another target; enter it again")
+			o.Log.Warn("stored secret not used: its target changed", "component", "sysconfig", "key", k)
+			continue
+		}
 		now := secretTargets[k](svc.cur)
 		skipped[k] = fmt.Errorf("the stored secret was entered for %s, the target is now %s; enter it again", orNone(bound), orNone(now))
 		o.Log.Warn("stored secret not used: its target changed", "component", "sysconfig", "key", k, "bound_to", bound, "now", now)

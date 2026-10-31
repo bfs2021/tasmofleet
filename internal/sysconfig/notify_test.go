@@ -1,7 +1,12 @@
 package sysconfig
 
 import (
+	"bytes"
+	"context"
 	"errors"
+	"github.com/nofuturekid/tasmofleet/internal/store"
+	"log/slog"
+	"strings"
 	"testing"
 )
 
@@ -94,5 +99,54 @@ func TestWebhookAddressIsRedactedInTheAuditButShownWhole(t *testing.T) {
 		if st.Key == "NOTIFY_WEBHOOK_URL" && st.Value != "http://hass.lan:8123/api/webhook/secret-id?token=abc" {
 			t.Fatalf("the page value lost part of the address: %q", st.Value)
 		}
+	}
+}
+
+// Why (security review): for Home Assistant the webhook id in the path IS the credential, and a
+// Gotify token sits in the query. Nothing observable may carry them: not the audit entries of a
+// change, not the log lines, not the "ignored stored value" text the page shows, and not the
+// fingerprint a secret is bound to.
+func TestWebhookPathAndQueryNeverReachAuditLogsOrSkippedText(t *testing.T) {
+	const full = "http://hass.lan:8123/api/webhook/ha-credential-77?token=gotify-credential-88"
+	var logs bytes.Buffer
+	st := newMem()
+	// A stored secret bound to the full address, and a webhook address that is another one now.
+	st.rows["NOTIFY_WEBHOOK_URL"] = store.SystemSetting{Key: "NOTIFY_WEBHOOK_URL", Value: "http://other.lan/api/webhook/other-credential-99"}
+	st.rows["NOTIFY_WEBHOOK_SECRET"] = store.SystemSetting{Key: "NOTIFY_WEBHOOK_SECRET", Value: "s1", Secret: true, Target: full}
+	cfg, err := loadCfg(baseEnv())
+	if err != nil {
+		t.Fatal(err)
+	}
+	aud := &memAudit{}
+	svc, err := New(context.Background(), Options{Base: cfg, Store: st, Audit: aud, Log: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var seen []string
+	for k, why := range svc.Skipped() { // what the page says right after the start, while the secret is still bound elsewhere
+		seen = append(seen, k, why)
+	}
+	if len(seen) == 0 {
+		t.Fatal("the secret bound to another address must be reported as not used")
+	}
+	if _, err := svc.Apply(t.Context(), Request{Actor: "admin", Audit: aud, Values: map[string]string{"NOTIFY_WEBHOOK_URL": full, "NOTIFY_WEBHOOK_SECRET": "s2"}}); err != nil {
+		t.Fatal(err)
+	}
+	seen = append(seen, logs.String())
+	for _, e := range aud.ev {
+		seen = append(seen, e.Action, e.Target, e.Detail)
+	}
+	for k, why := range svc.Skipped() {
+		seen = append(seen, k, why)
+	}
+	for _, text := range seen {
+		for _, leak := range []string{"ha-credential-77", "gotify-credential-88", "other-credential-99", "token=", "/api/webhook"} {
+			if strings.Contains(text, leak) {
+				t.Errorf("%q leaks %q", text, leak)
+			}
+		}
+	}
+	if !strings.Contains(strings.Join(seen, "\n"), "http://hass.lan:8123/***") {
+		t.Errorf("the audit should still say which host the webhook moved to: %v", seen)
 	}
 }
