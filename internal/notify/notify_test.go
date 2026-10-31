@@ -129,8 +129,6 @@ func TestWebhookSecretHeaderOnlyWhenSelected(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hdr = r.Header.Get("X-Token") }))
 		c := baseConfig()
 		c.NotifyWebhook, c.NotifyWebhookURL, c.NotifyWebhookAuth, c.NotifyWebhookHeader, c.NotifyWebhookSecret = true, srv.URL, auth, "X-Token", "s3cret-value"
-		newDispatcher(&c, nil).Emit(TestEvent(c, t0))
-		// Emit is async; Test is the synchronous path.
 		d := newDispatcher(&c, nil)
 		if _, err := d.Test(t.Context(), Webhook, c); err != nil {
 			t.Fatal(err)

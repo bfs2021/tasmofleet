@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { createServer, IncomingMessage, Server } from "node:http";
 import { createServer as createTCP, Server as TCPServer, Socket } from "node:net";
 import { join } from "node:path";
@@ -184,18 +184,19 @@ test("e-mail: Send test delivers one message and the password stays write-only",
 });
 
 // Why: an event reaches the channels without anyone pressing a button. A scheduled snapshot that
-// cannot be written (the folder is read-only) is the one failure this spec can cause for real; the
+// cannot be written (a file is in the way of its folder) is the one failure this spec can cause for real; the
 // webhook answers 404 and the status line must say so.
 test("a failed snapshot is delivered, and the failed delivery shows in the status line", async ({ page }) => {
-  const dir = join(app.dataDir, "snapshots");
-  mkdirSync(dir, { recursive: true });
-  chmodSync(dir, 0o500);
   hook.seen.length = 0;
   await page.setExtraHTTPHeaders(admin);
   await page.goto(app.url + "/settings/system?tab=backups");
   await page.locator("[data-key='SNAPSHOT_SCHEDULE'] .swtrack").click();
+  // A directory under the name of the snapshot about to be written (this minute and the next two): renaming a
+  // file onto a directory fails for every user, root included, and the settings page keeps listing fine.
+  const stamp = (d: Date) => d.toISOString().replace(/[-:]/g, "").replace(/^(\d{8})T(\d{4}).*$/, "$1-$2Z");
+  for (let i = 0; i < 3; i++) mkdirSync(join(app.dataDir, "snapshots", `tasmofleet-${stamp(new Date(Date.now() + i * 60_000))}.db`), { recursive: true });
   await page.getByRole("button", { name: "Save settings" }).click();
-  await expect(page.getByText("Saved.")).toBeVisible();
+  await page.waitForURL(/ok=saved/); // the save is done before the next page is opened
   await expect(async () => {
     await page.goto(app.url + "/settings/system?tab=notifications");
     await expect(page.locator("#card-notify-webhook .sys-status")).toContainText("Last delivery failed");
@@ -207,7 +208,6 @@ test("a failed snapshot is delivered, and the failed delivery shows in the statu
   await expect(page.locator("#card-notify-webhook .sys-test-res")).toHaveText("Webhook test: failed: HTTP 404");
   await shoot(page, "c-failed");
   hook.status = 200;
-  chmodSync(dir, 0o700);
   await sendTest(page, "#card-notify-webhook");
   await expect(page.locator("#card-notify-webhook .sys-test-res")).toHaveText("Webhook test: sent, HTTP 200");
   await shoot(page, "b-configured");
