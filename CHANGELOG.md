@@ -6,8 +6,13 @@ always upgrade automatically.
 
 ## Unreleased
 
+### Upgrade notes
+
+- Database migration 0041 adds two tables for the stability history (restarts and hourly Wi-Fi samples). Nothing to change in the template.
+
 ### Added
 
+- Stability per device: a new "Stability" card on the device Overview (between Relays and Identity) says Stable, Boot loop or Weak Wi-Fi. It shows the last restart in plain words (Tasmota's RestartReason, ESP8266 and ESP32 texts mapped by keyword, an unknown text shown as it came), restarts in 1 h, 24 h and 7 days counted from BootCount (so restarts TasmoFleet did not see are included), the Wi-Fi signal with a 24 h sparkline, reconnects since boot (LinkCount, Downtime) and, in a boot loop, the last five restarts. A boot loop is 3 or more restarts in 1 h or 6 in 24 h; weak Wi-Fi is an average signal below -75 dBm or 10 or more reconnects since boot. The device list shows a "Boot loop" / "Weak Wi-Fi" badge next to Online, and the dashboard's "Needs attention" lists both. Restarts come from the device's own tele/INFO3 over MQTT, or, on a device TasmoFleet reaches over HTTP, from an uptime that dropped between two polls followed by one `Status 1` (never Status 0). TasmoFleet keeps the newest 50 restarts per device and Wi-Fi samples for 7 days. Database migration 0041 adds the two tables (#325)
 - The firmware cache now prunes itself. A new setting, Settings, Firmware & updates, "Releases kept" (`FIRMWARE_KEEP_RELEASES`, default 3, `0` = never delete, applies at once), keeps the files of the newest cached releases. After every successful index refresh and in the daily clean-up older releases are deleted, except files a queued or running update needs (a release with one such file stays whole) and uploaded firmware. Every run that deletes something is in the audit log as "Prune firmware cache" with the number of files and the bytes freed (#252)
 
 ### Changed
